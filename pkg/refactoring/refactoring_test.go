@@ -200,15 +200,6 @@ func assertNilError(t *testing.T, err error) {
 	}
 }
 
-func runQuery(t *testing.T, driver neo4j.Driver, query string) {
-	session := driver.NewSession(neo4j.SessionConfig{})
-	defer assertCloses(t, session)
-	result, err := session.Run(query, nil)
-	assertNilError(t, err)
-	_, err = result.Consume()
-	assertNilError(t, err)
-}
-
 func asStringSlice(slice []any) []string {
 	result := make([]string, len(slice))
 	for i, element := range slice {
