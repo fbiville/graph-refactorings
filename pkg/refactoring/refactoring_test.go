@@ -27,14 +27,10 @@ func TestMergeNodes(outer *testing.T) {
 		assertNilError(outer, container.Terminate(ctx))
 	}()
 
-	graphInit := func(t *testing.T) {
-		runQuery(t, driver, "MATCH (n) DETACH DELETE n")
-		runQuery(t, driver, "CREATE (:Person {name: 'Florent'}), (:Person {name: 'Latifa'})")
-	}
-
 	refactorer := refactoring.NewGraphRefactorer(driver)
 
 	type testCase struct {
+		initQueries    []string
 		pattern        refactoring.Pattern
 		policies       map[string]refactoring.MergePolicy
 		expectedResult []string
@@ -45,6 +41,9 @@ func TestMergeNodes(outer *testing.T) {
 	}
 	testCases := []testCase{
 		{
+			initQueries: []string{
+				"CREATE (:Person {name: 'Florent'}), (:Person {name: 'Latifa'})",
+			},
 			pattern: pattern,
 			policies: map[string]refactoring.MergePolicy{
 				"name": refactoring.KeepAll,
@@ -54,6 +53,9 @@ func TestMergeNodes(outer *testing.T) {
 			},
 		},
 		{
+			initQueries: []string{
+				"CREATE (:Person {name: 'Florent'}), (:Person {name: 'Latifa'})",
+			},
 			pattern: pattern,
 			policies: map[string]refactoring.MergePolicy{
 				"name": refactoring.KeepFirst,
@@ -63,6 +65,9 @@ func TestMergeNodes(outer *testing.T) {
 			},
 		},
 		{
+			initQueries: []string{
+				"CREATE (:Person {name: 'Florent'}), (:Person {name: 'Latifa'})",
+			},
 			pattern: pattern,
 			policies: map[string]refactoring.MergePolicy{
 				"name": refactoring.KeepLast,
@@ -75,23 +80,36 @@ func TestMergeNodes(outer *testing.T) {
 
 	for i, testCase := range testCases {
 		outer.Run(fmt.Sprintf("[%d] merge node properties %v", i, testCase.policies), func(t *testing.T) {
-			graphInit(t)
+			session := driver.NewSession(neo4j.SessionConfig{})
+			initGraph(t, session, append([]string{"MATCH (n) DETACH DELETE n"}, testCase.initQueries...))
 
 			err := refactorer.MergeNodes(testCase.pattern, testCase.policies)
 
 			assertNilError(t, err)
-			session := driver.NewSession(neo4j.SessionConfig{})
 			defer assertCloses(t, session)
-			result, err := session.Run("MATCH (p) RETURN p.name AS name", nil)
+			result, err := session.Run("MATCH (p:Person) WHERE p.name IS NOT NULL RETURN p.name AS name", nil)
 			assertNilError(t, err)
 			record, err := result.Single()
 			assertNilError(t, err)
 			actual, _ := record.Get("name")
 			expected := testCase.expectedResult
 			if !reflect.DeepEqual(asStringSlice(actual.([]any)), expected) {
-				t.Errorf("Expected %v got: %v", expected, actual)
+				t.Fatalf("Expected %v got: %v", expected, actual)
 			}
 		})
+	}
+}
+
+func initGraph(t *testing.T, session neo4j.Session, queries []string) {
+	for i, query := range queries {
+		result, err := session.Run(query, nil)
+		if err != nil {
+			t.Fatalf("query execution %d %q failed: %v", i, query, err)
+		}
+		_, err = result.Consume()
+		if err != nil {
+			t.Fatalf("result consumption for query %d %q failed: %v", i, query, err)
+		}
 	}
 }
 
@@ -134,7 +152,7 @@ func assertCloses(t *testing.T, closer io.Closer) {
 
 func assertNilError(t *testing.T, err error) {
 	if err != nil {
-		t.Error(err)
+		t.Fatal(err)
 	}
 }
 
