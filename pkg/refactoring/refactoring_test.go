@@ -27,8 +27,6 @@ func TestMergeNodes(outer *testing.T) {
 		assertNilError(outer, container.Terminate(ctx))
 	}()
 
-	refactorer := refactoring.NewGraphRefactorer(driver)
-
 	type testCase struct {
 		name           string
 		initQueries    []string
@@ -122,12 +120,17 @@ func TestMergeNodes(outer *testing.T) {
 	for i, testCase := range testCases {
 		outer.Run(fmt.Sprintf("[%d] %s", i, testCase.name), func(t *testing.T) {
 			session := driver.NewSession(neo4j.SessionConfig{})
+			defer assertCloses(t, session)
 			initGraph(t, session, append([]string{"MATCH (n) DETACH DELETE n"}, testCase.initQueries...))
+			tx, err := session.BeginTransaction()
+			assertNilError(t, err)
+			refactorer := refactoring.NewGraphRefactorer(tx)
 
-			err := refactorer.MergeNodes(testCase.pattern, testCase.policies)
+			err = refactorer.MergeNodes(testCase.pattern, testCase.policies)
 
 			assertNilError(t, err)
-			defer assertCloses(t, session)
+			assertNilError(t, tx.Commit())
+			assertNilError(t, tx.Close())
 			result, err := session.Run("MATCH (p:Person) WHERE p.name IS NOT NULL RETURN p.name AS name", nil)
 			assertNilError(t, err)
 			record, err := result.Single()

@@ -3,7 +3,6 @@ package refactoring
 import (
 	"fmt"
 	"github.com/neo4j/neo4j-go-driver/v4/neo4j"
-	"io"
 	"strings"
 )
 
@@ -45,38 +44,25 @@ type GraphRefactorings interface {
 }
 
 type graphRefactorer struct {
-	driver neo4j.Driver
+	transaction neo4j.Transaction
 }
 
-func NewGraphRefactorer(driver neo4j.Driver) GraphRefactorings {
-	return &graphRefactorer{driver: driver}
+func NewGraphRefactorer(transaction neo4j.Transaction) GraphRefactorings {
+	return &graphRefactorer{transaction: transaction}
 }
 
 func (g *graphRefactorer) MergeNodes(pattern Pattern, policies map[string]MergePolicy) (err error) {
-	session := g.driver.NewSession(neo4j.SessionConfig{})
-	defer func() {
-		err = terminateCloser(session, err)
-	}()
-
-	tx, err := session.BeginTransaction()
+	properties, err := aggregateProperties(g.transaction, pattern, policies)
 	if err != nil {
 		return err
 	}
-	defer func() {
-		err = terminateCloser(tx, err)
-	}()
-
-	properties, err := aggregateProperties(tx, pattern, policies)
-	if err != nil {
+	if err := updateProperties(g.transaction, pattern, properties); err != nil {
 		return err
 	}
-	if err := updateProperties(tx, pattern, properties); err != nil {
+	if err := removeOtherNodes(g.transaction, pattern); err != nil {
 		return err
 	}
-	if err := removeOtherNodes(tx, pattern); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return nil
 }
 
 func aggregateProperties(transaction neo4j.Transaction, pattern Pattern, policies map[string]MergePolicy) ([]property, error) {
@@ -148,15 +134,4 @@ DELETE otherNode
 type property struct {
 	name  string
 	value any
-}
-
-func terminateCloser(closer io.Closer, previousErr error) error {
-	err := closer.Close()
-	if err == nil {
-		return previousErr
-	}
-	if previousErr == nil {
-		return err
-	}
-	return fmt.Errorf("error %v occurred after %w", err, previousErr)
 }
