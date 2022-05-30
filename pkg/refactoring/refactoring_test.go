@@ -30,21 +30,22 @@ func TestMergeNodes(outer *testing.T) {
 	refactorer := refactoring.NewGraphRefactorer(driver)
 
 	type testCase struct {
+		name           string
 		initQueries    []string
 		pattern        refactoring.Pattern
 		policies       map[string]refactoring.MergePolicy
 		expectedResult []string
 	}
-	pattern := refactoring.Pattern{
-		CypherFragment: "(p:Person) WITH p ORDER BY p.name ASC",
-		OutputVariable: "p",
-	}
 	testCases := []testCase{
 		{
+			name: "keeps all properties",
 			initQueries: []string{
 				"CREATE (:Person {name: 'Florent'}), (:Person {name: 'Latifa'})",
 			},
-			pattern: pattern,
+			pattern: refactoring.Pattern{
+				CypherFragment: "(p:Person) WITH p ORDER BY p.name ASC",
+				OutputVariable: "p",
+			},
 			policies: map[string]refactoring.MergePolicy{
 				"name": refactoring.KeepAll,
 			},
@@ -53,10 +54,14 @@ func TestMergeNodes(outer *testing.T) {
 			},
 		},
 		{
+			name: "keeps first property",
 			initQueries: []string{
 				"CREATE (:Person {name: 'Florent'}), (:Person {name: 'Latifa'})",
 			},
-			pattern: pattern,
+			pattern: refactoring.Pattern{
+				CypherFragment: "(p:Person) WITH p ORDER BY p.name ASC",
+				OutputVariable: "p",
+			},
 			policies: map[string]refactoring.MergePolicy{
 				"name": refactoring.KeepFirst,
 			},
@@ -65,10 +70,46 @@ func TestMergeNodes(outer *testing.T) {
 			},
 		},
 		{
+			name: "keeps first set property",
+			initQueries: []string{
+				"CREATE (:Person), (:Person {name: 'Florent'}), (:Person {name: 'Latifa'})",
+			},
+			pattern: refactoring.Pattern{
+				CypherFragment: "(p:Person) WITH p ORDER BY p.name ASC",
+				OutputVariable: "p",
+			},
+			policies: map[string]refactoring.MergePolicy{
+				"name": refactoring.KeepFirst,
+			},
+			expectedResult: []string{
+				"Florent",
+			},
+		},
+		{
+			name: "keeps last property",
 			initQueries: []string{
 				"CREATE (:Person {name: 'Florent'}), (:Person {name: 'Latifa'})",
 			},
-			pattern: pattern,
+			pattern: refactoring.Pattern{
+				CypherFragment: "(p:Person) WITH p ORDER BY p.name ASC",
+				OutputVariable: "p",
+			},
+			policies: map[string]refactoring.MergePolicy{
+				"name": refactoring.KeepLast,
+			},
+			expectedResult: []string{
+				"Latifa",
+			},
+		},
+		{
+			name: "keeps last set property",
+			initQueries: []string{
+				"CREATE (:Person {name: 'Florent'}), (:Person {name: 'Latifa'}), (:Person)",
+			},
+			pattern: refactoring.Pattern{
+				CypherFragment: "(p:Person) WITH p ORDER BY p.name ASC",
+				OutputVariable: "p",
+			},
 			policies: map[string]refactoring.MergePolicy{
 				"name": refactoring.KeepLast,
 			},
@@ -79,7 +120,7 @@ func TestMergeNodes(outer *testing.T) {
 	}
 
 	for i, testCase := range testCases {
-		outer.Run(fmt.Sprintf("[%d] merge node properties %v", i, testCase.policies), func(t *testing.T) {
+		outer.Run(fmt.Sprintf("[%d] %s", i, testCase.name), func(t *testing.T) {
 			session := driver.NewSession(neo4j.SessionConfig{})
 			initGraph(t, session, append([]string{"MATCH (n) DETACH DELETE n"}, testCase.initQueries...))
 

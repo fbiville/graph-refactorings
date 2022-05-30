@@ -57,26 +57,40 @@ func (g *graphRefactorer) MergeNodes(pattern Pattern, policies map[string]MergeP
 	defer func() {
 		err = terminateCloser(session, err)
 	}()
-	transaction, err := session.BeginTransaction()
+
+	tx, err := session.BeginTransaction()
 	if err != nil {
 		return err
 	}
 	defer func() {
-		err = terminateCloser(transaction, err)
+		err = terminateCloser(tx, err)
 	}()
-	result, err := transaction.Run(fmt.Sprintf(`MATCH %s
-UNWIND keys(%[2]s) AS key
-WITH {key: key, values: collect(%[2]s[key])} AS property, tail(collect(%[2]s)) AS rest
-UNWIND rest AS otherNode
-DELETE otherNode
-RETURN property
-`, pattern.CypherFragment, pattern.OutputVariable), nil)
+
+	properties, err := aggregateProperties(tx, pattern, policies)
 	if err != nil {
 		return err
 	}
+	if err := updateProperties(tx, pattern, properties); err != nil {
+		return err
+	}
+	if err := removeOtherNodes(tx, pattern); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func aggregateProperties(transaction neo4j.Transaction, pattern Pattern, policies map[string]MergePolicy) ([]property, error) {
+	result, err := transaction.Run(fmt.Sprintf(`MATCH %s
+UNWIND keys(%[2]s) AS key
+WITH {key: key, values: collect(%[2]s[key])} AS property, tail(collect(%[2]s)) AS rest
+RETURN property
+`, pattern.CypherFragment, pattern.OutputVariable), nil)
+	if err != nil {
+		return nil, err
+	}
 	records, err := result.Collect()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	properties := make([]property, len(records))
 	for i, record := range records {
@@ -85,30 +99,17 @@ RETURN property
 		propertyName := prop["key"].(string)
 		policy, found := policies[propertyName]
 		if !found {
-			return fmt.Errorf("could not find merge policy for property %s", propertyName)
+			return nil, fmt.Errorf("could not find merge policy for property %s", propertyName)
 		}
 		properties[i] = property{
 			name:  propertyName,
 			value: policy.Combine(prop["values"].([]any)),
 		}
 	}
-
-	cypherQuery, parameters := updateProperties(pattern, properties)
-	result, err = transaction.Run(cypherQuery, parameters)
-	if err != nil {
-		return err
-	}
-	if _, err = result.Consume(); err != nil {
-		return nil
-	}
-
-	if err = transaction.Commit(); err != nil {
-		return err
-	}
-	return nil
+	return properties, nil
 }
 
-func updateProperties(pattern Pattern, properties []property) (string, map[string]any) {
+func updateProperties(transaction neo4j.Transaction, pattern Pattern, properties []property) error {
 	parameters := make(map[string]any, len(properties))
 	builder := strings.Builder{}
 	builder.WriteString(fmt.Sprintf("MATCH %s SET ", pattern.CypherFragment))
@@ -120,7 +121,28 @@ func updateProperties(pattern Pattern, properties []property) (string, map[strin
 			builder.WriteString(", ")
 		}
 	}
-	return builder.String(), parameters
+
+	result, err := transaction.Run(builder.String(), parameters)
+	if err != nil {
+		return err
+	}
+	if _, err = result.Consume(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func removeOtherNodes(transaction neo4j.Transaction, pattern Pattern) error {
+	result, err := transaction.Run(fmt.Sprintf(`MATCH %s
+WITH tail(collect(%[2]s)) AS rest
+UNWIND rest as otherNode
+DELETE otherNode
+`, pattern.CypherFragment, pattern.OutputVariable), nil)
+	if err != nil {
+		return err
+	}
+	_, err = result.Consume()
+	return err
 }
 
 type property struct {
