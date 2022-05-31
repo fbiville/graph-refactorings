@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/fbiville/node-clone/pkg/refactoring"
 	"github.com/neo4j/neo4j-go-driver/v4/neo4j"
+	"github.com/neo4j/neo4j-go-driver/v4/neo4j/dbtype"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 	"io"
@@ -12,9 +13,12 @@ import (
 	"testing"
 )
 
-const username = "neo4j"
-
-const password = "s3cr3t"
+type base struct {
+	name        string
+	initQueries []string
+	pattern     refactoring.Pattern
+	policies    map[string]refactoring.MergePolicy
+}
 
 func TestMergeNodes(outer *testing.T) {
 	ctx := context.Background()
@@ -27,121 +31,431 @@ func TestMergeNodes(outer *testing.T) {
 		assertNilError(outer, container.Terminate(ctx))
 	}()
 
-	type testCase struct {
-		name           string
-		initQueries    []string
-		pattern        refactoring.Pattern
-		policies       map[string]refactoring.MergePolicy
-		expectedResult []string
-	}
-	testCases := []testCase{
-		{
-			name: "keeps all properties",
-			initQueries: []string{
-				"CREATE (:Person {name: 'Florent'}), (:Person {name: 'Latifa'})",
-			},
-			pattern: refactoring.Pattern{
-				CypherFragment: "(p:Person) WITH p ORDER BY p.name ASC",
-				OutputVariable: "p",
-			},
-			policies: map[string]refactoring.MergePolicy{
-				"name": refactoring.KeepAll,
-			},
-			expectedResult: []string{
-				"Florent", "Latifa",
-			},
-		},
-		{
-			name: "keeps first property",
-			initQueries: []string{
-				"CREATE (:Person {name: 'Florent'}), (:Person {name: 'Latifa'})",
-			},
-			pattern: refactoring.Pattern{
-				CypherFragment: "(p:Person) WITH p ORDER BY p.name ASC",
-				OutputVariable: "p",
-			},
-			policies: map[string]refactoring.MergePolicy{
-				"name": refactoring.KeepFirst,
-			},
-			expectedResult: []string{
-				"Florent",
-			},
-		},
-		{
-			name: "keeps first set property",
-			initQueries: []string{
-				"CREATE (:Person), (:Person {name: 'Florent'}), (:Person {name: 'Latifa'})",
-			},
-			pattern: refactoring.Pattern{
-				CypherFragment: "(p:Person) WITH p ORDER BY p.name ASC",
-				OutputVariable: "p",
-			},
-			policies: map[string]refactoring.MergePolicy{
-				"name": refactoring.KeepFirst,
-			},
-			expectedResult: []string{
-				"Florent",
-			},
-		},
-		{
-			name: "keeps last property",
-			initQueries: []string{
-				"CREATE (:Person {name: 'Florent'}), (:Person {name: 'Latifa'})",
-			},
-			pattern: refactoring.Pattern{
-				CypherFragment: "(p:Person) WITH p ORDER BY p.name ASC",
-				OutputVariable: "p",
-			},
-			policies: map[string]refactoring.MergePolicy{
-				"name": refactoring.KeepLast,
-			},
-			expectedResult: []string{
-				"Latifa",
-			},
-		},
-		{
-			name: "keeps last set property",
-			initQueries: []string{
-				"CREATE (:Person {name: 'Florent'}), (:Person {name: 'Latifa'}), (:Person)",
-			},
-			pattern: refactoring.Pattern{
-				CypherFragment: "(p:Person) WITH p ORDER BY p.name ASC",
-				OutputVariable: "p",
-			},
-			policies: map[string]refactoring.MergePolicy{
-				"name": refactoring.KeepLast,
-			},
-			expectedResult: []string{
-				"Latifa",
-			},
-		},
-	}
+	outer.Run("no data", func(t *testing.T) {
+		session := driver.NewSession(neo4j.SessionConfig{})
+		defer assertCloses(t, session)
+		initGraph(t, session, []string{"MATCH (n) DETACH DELETE n"})
+		tx, err := session.BeginTransaction()
+		assertNilError(t, err)
+		refactorer := refactoring.NewGraphRefactorer(tx)
 
-	for i, testCase := range testCases {
-		outer.Run(fmt.Sprintf("[%d] %s", i, testCase.name), func(t *testing.T) {
-			session := driver.NewSession(neo4j.SessionConfig{})
-			defer assertCloses(t, session)
-			initGraph(t, session, append([]string{"MATCH (n) DETACH DELETE n"}, testCase.initQueries...))
-			tx, err := session.BeginTransaction()
-			assertNilError(t, err)
-			refactorer := refactoring.NewGraphRefactorer(tx)
+		err = refactorer.MergeNodes(refactoring.Pattern{
+			CypherFragment: "(n)",
+			OutputVariable: "n",
+		}, nil)
 
-			err = refactorer.MergeNodes(testCase.pattern, testCase.policies)
+		assertNilError(t, err)
+		assertNilError(t, tx.Commit())
+		assertNilError(t, tx.Close())
+		result, err := session.Run("MATCH (n) RETURN count(n) AS count", nil)
+		assertNilError(t, err)
+		record, err := result.Single()
+		assertNilError(t, err)
+		actual, _ := record.Get("count")
+		if actual.(int64) != 0 {
+			t.Fatalf("Expected 0 got: %v", actual)
+		}
+	})
 
-			assertNilError(t, err)
-			assertNilError(t, tx.Commit())
-			assertNilError(t, tx.Close())
-			result, err := session.Run("MATCH (p:Person) WHERE p.name IS NOT NULL RETURN p.name AS name", nil)
-			assertNilError(t, err)
-			record, err := result.Single()
-			assertNilError(t, err)
-			actual, _ := record.Get("name")
-			expected := testCase.expectedResult
-			if !reflect.DeepEqual(asStringSlice(actual.([]any)), expected) {
-				t.Fatalf("Expected %v got: %v", expected, actual)
-			}
-		})
-	}
+	outer.Run("single node", func(t *testing.T) {
+		session := driver.NewSession(neo4j.SessionConfig{})
+		defer assertCloses(t, session)
+		initGraph(t, session, []string{"MATCH (n) DETACH DELETE n", "CREATE (:Person {name: 'Florent'})"})
+		tx, err := session.BeginTransaction()
+		assertNilError(t, err)
+		refactorer := refactoring.NewGraphRefactorer(tx)
+
+		err = refactorer.MergeNodes(refactoring.Pattern{
+			CypherFragment: "(n)",
+			OutputVariable: "n",
+		}, nil)
+
+		assertNilError(t, err)
+		assertNilError(t, tx.Commit())
+		assertNilError(t, tx.Close())
+		result, err := session.Run("MATCH (n) RETURN n", nil)
+		assertNilError(t, err)
+		record, err := result.Single()
+		assertNilError(t, err)
+		rawNode, _ := record.Get("n")
+		node := rawNode.(neo4j.Node)
+		expectedLabels := []string{"Person"}
+		actualLabels := node.Labels
+		if !reflect.DeepEqual(actualLabels, expectedLabels) {
+			t.Errorf("Expected labels %v, got %v", expectedLabels, actualLabels)
+		}
+		expectedProps := map[string]any{"name": "Florent"}
+		actualProps := node.Props
+		if !reflect.DeepEqual(actualProps, expectedProps) {
+			t.Errorf("Expected props %v, got %v", expectedProps, actualProps)
+		}
+	})
+
+	outer.Run("single node matching pattern", func(t *testing.T) {
+		session := driver.NewSession(neo4j.SessionConfig{})
+		defer assertCloses(t, session)
+		initGraph(t, session, []string{"MATCH (n) DETACH DELETE n", "CREATE (:Person {name: 'Florent'}), (:Robot {name: 'Flower'})"})
+		tx, err := session.BeginTransaction()
+		assertNilError(t, err)
+		refactorer := refactoring.NewGraphRefactorer(tx)
+
+		err = refactorer.MergeNodes(refactoring.Pattern{
+			CypherFragment: "(n:Person)",
+			OutputVariable: "n",
+		}, nil)
+
+		assertNilError(t, err)
+		assertNilError(t, tx.Commit())
+		assertNilError(t, tx.Close())
+		result, err := session.Run("MATCH (n:Person) RETURN n", nil)
+		assertNilError(t, err)
+		record, err := result.Single()
+		assertNilError(t, err)
+		rawNode, _ := record.Get("n")
+		node := rawNode.(neo4j.Node)
+		expectedLabels := []string{"Person"}
+		actualLabels := node.Labels
+		if !reflect.DeepEqual(actualLabels, expectedLabels) {
+			t.Errorf("Expected labels %v, got %v", expectedLabels, actualLabels)
+		}
+		expectedProps := map[string]any{"name": "Florent"}
+		actualProps := node.Props
+		if !reflect.DeepEqual(actualProps, expectedProps) {
+			t.Errorf("Expected props %v, got %v", expectedProps, actualProps)
+		}
+	})
+
+	outer.Run("two nodes with same label, no prop", func(t *testing.T) {
+		session := driver.NewSession(neo4j.SessionConfig{})
+		defer assertCloses(t, session)
+		initGraph(t, session, []string{"MATCH (n) DETACH DELETE n", "CREATE (:Person), (:Person)"})
+		tx, err := session.BeginTransaction()
+		assertNilError(t, err)
+		refactorer := refactoring.NewGraphRefactorer(tx)
+
+		err = refactorer.MergeNodes(refactoring.Pattern{
+			CypherFragment: "(n)",
+			OutputVariable: "n",
+		}, nil)
+
+		assertNilError(t, err)
+		assertNilError(t, tx.Commit())
+		assertNilError(t, tx.Close())
+		result, err := session.Run("MATCH (n) RETURN n", nil)
+		assertNilError(t, err)
+		record, err := result.Single()
+		assertNilError(t, err)
+		rawNode, _ := record.Get("n")
+		node := rawNode.(neo4j.Node)
+		expectedLabels := []string{"Person"}
+		actualLabels := node.Labels
+		if !reflect.DeepEqual(actualLabels, expectedLabels) {
+			t.Errorf("Expected labels %v, got %v", expectedLabels, actualLabels)
+		}
+		actualProps := node.Props
+		if len(actualProps) != 0 {
+			t.Errorf("Expected no props, got %v", actualProps)
+		}
+	})
+
+	outer.Run("two matching nodes plus other unmatched", func(t *testing.T) {
+		session := driver.NewSession(neo4j.SessionConfig{})
+		defer assertCloses(t, session)
+		initGraph(t, session, []string{"MATCH (n) DETACH DELETE n", "CREATE (:Person), (:Person), (:Robot {name: 'mystery'})"})
+		tx, err := session.BeginTransaction()
+		assertNilError(t, err)
+		refactorer := refactoring.NewGraphRefactorer(tx)
+
+		err = refactorer.MergeNodes(refactoring.Pattern{
+			CypherFragment: "(n:Person)",
+			OutputVariable: "n",
+		}, nil)
+
+		assertNilError(t, err)
+		assertNilError(t, tx.Commit())
+		assertNilError(t, tx.Close())
+		result, err := session.Run("MATCH (n:Person) RETURN n", nil)
+		assertNilError(t, err)
+		record, err := result.Single()
+		assertNilError(t, err)
+		rawNode, _ := record.Get("n")
+		node := rawNode.(neo4j.Node)
+		expectedLabels := []string{"Person"}
+		actualLabels := node.Labels
+		if !reflect.DeepEqual(actualLabels, expectedLabels) {
+			t.Errorf("Expected labels %v, got %v", expectedLabels, actualLabels)
+		}
+		actualProps := node.Props
+		if len(actualProps) != 0 {
+			t.Errorf("Expected no props, got %v", actualProps)
+		}
+	})
+
+	outer.Run("disconnected nodes", func(inner *testing.T) {
+		type testCase struct {
+			base
+			expectedNodeName any
+		}
+		testCases := []testCase{
+			{
+				base: base{
+					name: "keeps all properties",
+					initQueries: []string{
+						"CREATE (:Person {name: 'Florent'}), (:Person {name: 'Latifa'})",
+					},
+					pattern: refactoring.Pattern{
+						CypherFragment: "(p:Person) WITH p ORDER BY p.name ASC",
+						OutputVariable: "p",
+					},
+					policies: map[string]refactoring.MergePolicy{
+						"name": refactoring.KeepAll,
+					},
+				},
+				expectedNodeName: []any{"Florent", "Latifa"},
+			},
+			{
+				base: base{
+					name: "keeps first property",
+					initQueries: []string{
+						"CREATE (:Person {name: 'Florent'}), (:Person {name: 'Latifa'})",
+					},
+					pattern: refactoring.Pattern{
+						CypherFragment: "(p:Person) WITH p ORDER BY p.name ASC",
+						OutputVariable: "p",
+					},
+					policies: map[string]refactoring.MergePolicy{
+						"name": refactoring.KeepFirst,
+					},
+				},
+				expectedNodeName: "Florent",
+			},
+			{
+				base: base{
+					name: "keeps first set property",
+					initQueries: []string{
+						"CREATE (:Person), (:Person {name: 'Florent'}), (:Person {name: 'Latifa'})",
+					},
+					pattern: refactoring.Pattern{
+						CypherFragment: "(p:Person) WITH p ORDER BY p.name ASC",
+						OutputVariable: "p",
+					},
+					policies: map[string]refactoring.MergePolicy{
+						"name": refactoring.KeepFirst,
+					},
+				},
+				expectedNodeName: "Florent",
+			},
+			{
+				base: base{
+					name: "keeps last property",
+					initQueries: []string{
+						"CREATE (:Person {name: 'Florent'}), (:Person {name: 'Latifa'})",
+					},
+					pattern: refactoring.Pattern{
+						CypherFragment: "(p:Person) WITH p ORDER BY p.name ASC",
+						OutputVariable: "p",
+					},
+					policies: map[string]refactoring.MergePolicy{
+						"name": refactoring.KeepLast,
+					},
+				},
+				expectedNodeName: "Latifa",
+			},
+			{
+				base: base{
+					name: "keeps last set property",
+					initQueries: []string{
+						"CREATE (:Person {name: 'Florent'}), (:Person {name: 'Latifa'}), (:Person)",
+					},
+					pattern: refactoring.Pattern{
+						CypherFragment: "(p:Person) WITH p ORDER BY p.name ASC",
+						OutputVariable: "p",
+					},
+					policies: map[string]refactoring.MergePolicy{
+						"name": refactoring.KeepLast,
+					},
+				},
+				expectedNodeName: "Latifa",
+			},
+		}
+
+		for i, testCase := range testCases {
+			inner.Run(fmt.Sprintf("[%d] %s", i, testCase.name), func(t *testing.T) {
+				session := driver.NewSession(neo4j.SessionConfig{})
+				defer assertCloses(t, session)
+				initGraph(t, session, append([]string{"MATCH (n) DETACH DELETE n"}, testCase.initQueries...))
+				tx, err := session.BeginTransaction()
+				assertNilError(t, err)
+				refactorer := refactoring.NewGraphRefactorer(tx)
+
+				err = refactorer.MergeNodes(testCase.pattern, testCase.policies)
+
+				assertNilError(t, err)
+				assertNilError(t, tx.Commit())
+				assertNilError(t, tx.Close())
+				result, err := session.Run("MATCH (p:Person) WHERE p.name IS NOT NULL RETURN p.name AS name", nil)
+				assertNilError(t, err)
+				record, err := result.Single()
+				assertNilError(t, err)
+				actual, _ := record.Get("name")
+				expected := testCase.expectedNodeName
+				if !reflect.DeepEqual(actual, expected) {
+					t.Fatalf("Expected %v got: %v", expected, actual)
+				}
+			})
+		}
+	})
+
+	outer.Run("connected nodes", func(inner *testing.T) {
+		type testCase struct {
+			base
+			expectedNodeName any
+			expectedIncoming []any
+			expectedOutgoing []any
+		}
+
+		testCases := []testCase{
+			{
+				base: base{
+					name: "attaches outgoing relationships of merged nodes",
+					initQueries: []string{`
+		CREATE (florent:Person {name: "Florent"}), (nathan:Person {name: "Nathan"}), (liquibase:Project {name: "Liquibase"})
+		CREATE (florent)-[:WORKS_ON {module: "neo4j"}]->(liquibase)
+		CREATE (nathan)-[:WORKS_ON {module: "core"}]->(liquibase)
+		CREATE (liquibase)-[:FOUNDED_BY]->(nathan)
+		`,
+					},
+					pattern: refactoring.Pattern{
+						CypherFragment: "(p:Person) WITH p ORDER BY p.name DESC",
+						OutputVariable: "p",
+					},
+					policies: map[string]refactoring.MergePolicy{
+						"name": refactoring.KeepFirst,
+					},
+				},
+				expectedNodeName: "Nathan",
+				expectedIncoming: []any{
+					neo4j.Relationship{
+						Type:  "FOUNDED_BY",
+						Props: map[string]interface{}{},
+					},
+				},
+				expectedOutgoing: []any{
+					neo4j.Relationship{
+						Type:  "WORKS_ON",
+						Props: map[string]interface{}{"module": "neo4j"},
+					},
+					neo4j.Relationship{
+						Type:  "WORKS_ON",
+						Props: map[string]interface{}{"module": "core"},
+					},
+				},
+			},
+			{
+				base: base{
+					name: "attaches incoming relationships of merged nodes",
+					initQueries: []string{`
+CREATE (florent:Person {name: "Florent"}), (nathan:Person {name: "Nathan"}), (liquigraph:Project {name: "Liquigraph"})
+CREATE (florent)<-[:FOUNDED_BY {since: "some date"}]-(liquigraph)
+`,
+					},
+					pattern: refactoring.Pattern{
+						CypherFragment: "(p:Person) WITH p ORDER BY p.name DESC",
+						OutputVariable: "p",
+					},
+					policies: map[string]refactoring.MergePolicy{
+						"name": refactoring.KeepAll,
+					},
+				},
+				expectedNodeName: []any{"Nathan", "Florent"},
+				expectedIncoming: []any{
+					neo4j.Relationship{
+						Type: "FOUNDED_BY",
+						Props: map[string]interface{}{
+							"since": "some date",
+						},
+					},
+				},
+				expectedOutgoing: []any{},
+			},
+			{
+				base: base{
+					name: "attaches self relationships of merged nodes",
+					initQueries: []string{`
+CREATE (florent:Person {name: "Florent"}), (nathan:Person {name: "Nathan"})
+CREATE (florent)<-[:BLAMES {frequency: "sometimes"}]-(florent)
+`,
+					},
+					pattern: refactoring.Pattern{
+						CypherFragment: "(p:Person) WITH p ORDER BY p.name DESC",
+						OutputVariable: "p",
+					},
+					policies: map[string]refactoring.MergePolicy{
+						"name": refactoring.KeepLast,
+					},
+				},
+				expectedNodeName: "Florent",
+				expectedIncoming: []any{
+					neo4j.Relationship{
+						Type: "BLAMES",
+						Props: map[string]interface{}{
+							"frequency": "sometimes",
+						},
+					},
+				},
+				expectedOutgoing: []any{
+					neo4j.Relationship{
+						Type: "BLAMES",
+						Props: map[string]interface{}{
+							"frequency": "sometimes",
+						},
+					}},
+			},
+		}
+
+		for i, testCase := range testCases {
+			inner.Run(fmt.Sprintf("[%d] %s", i, testCase.name), func(t *testing.T) {
+				session := driver.NewSession(neo4j.SessionConfig{})
+				defer assertCloses(t, session)
+				initGraph(t, session, append([]string{"MATCH (n) DETACH DELETE n"}, testCase.initQueries...))
+				tx, err := session.BeginTransaction()
+				assertNilError(t, err)
+				refactorer := refactoring.NewGraphRefactorer(tx)
+
+				err = refactorer.MergeNodes(testCase.pattern, testCase.policies)
+
+				assertNilError(t, err)
+				assertNilError(t, tx.Commit())
+				assertNilError(t, tx.Close())
+				result, err := session.Run(`
+MATCH (p:Person)
+RETURN p.name AS name, [ (p)-[outgoing]->() | outgoing ] AS allOutgoing, [ (p)<-[incoming]-() | incoming ] AS allIncoming
+`, nil)
+				assertNilError(t, err)
+				record, err := result.Single()
+				assertNilError(t, err)
+				actual, _ := record.Get("name")
+				expected := testCase.expectedNodeName
+				if !reflect.DeepEqual(actual, expected) {
+					t.Fatalf("Expected %v got: %v", expected, actual)
+				}
+				rawIncoming, _ := record.Get("allIncoming")
+				incoming := rawIncoming.([]any)
+				actual = ignoringIds(incoming)
+				expected = testCase.expectedIncoming
+				if !reflect.DeepEqual(expected, actual) {
+					t.Fatalf("Expected %v got: %v", expected, actual)
+				}
+				rawOutgoing, _ := record.Get("allOutgoing")
+				outgoing := rawOutgoing.([]any)
+				actual = ignoringIds(outgoing)
+				expected = testCase.expectedOutgoing
+				if !reflect.DeepEqual(expected, actual) {
+					t.Fatalf("Expected %v got: %v", expected, actual)
+				}
+			})
+		}
+	})
 }
 
 func initGraph(t *testing.T, session neo4j.Session, queries []string) {
@@ -156,6 +470,10 @@ func initGraph(t *testing.T, session neo4j.Session, queries []string) {
 		}
 	}
 }
+
+const username = "neo4j"
+
+const password = "s3cr3t"
 
 func startNeo4jContainer(ctx context.Context) (testcontainers.Container, neo4j.Driver, error) {
 	request := testcontainers.ContainerRequest{
@@ -200,10 +518,14 @@ func assertNilError(t *testing.T, err error) {
 	}
 }
 
-func asStringSlice(slice []any) []string {
-	result := make([]string, len(slice))
-	for i, element := range slice {
-		result[i] = element.(string)
+func ignoringIds(rels []any) []any {
+	result := make([]any, len(rels))
+	for i, rel := range rels {
+		relationship := rel.(dbtype.Relationship)
+		result[i] = neo4j.Relationship{
+			Type:  relationship.Type,
+			Props: relationship.Props,
+		}
 	}
 	return result
 }
