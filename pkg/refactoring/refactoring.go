@@ -39,37 +39,32 @@ type Pattern struct {
 	OutputVariable string
 }
 
-type GraphRefactorings interface {
-	MergeNodes(pattern Pattern, policies map[string]MergePolicy) error
+func MergeNodes(transaction neo4j.Transaction, pattern Pattern, policies map[string]MergePolicy) error {
+	_, err := MergeNodesFn(pattern, policies)(transaction)
+	return err
 }
 
-type graphRefactorer struct {
-	transaction neo4j.Transaction
-}
-
-func NewGraphRefactorer(transaction neo4j.Transaction) GraphRefactorings {
-	return &graphRefactorer{transaction: transaction}
-}
-
-func (g *graphRefactorer) MergeNodes(pattern Pattern, policies map[string]MergePolicy) error {
-	ids, err := getNodeIds(g.transaction, pattern)
-	if err != nil {
-		return err
+func MergeNodesFn(pattern Pattern, policies map[string]MergePolicy) neo4j.TransactionWork {
+	return func(transaction neo4j.Transaction) (interface{}, error) {
+		ids, err := getNodeIds(transaction, pattern)
+		if err != nil {
+			return nil, err
+		}
+		if len(ids) < 2 {
+			return nil, nil
+		}
+		if err := copyRelationships(transaction, ids); err != nil {
+			return nil, err
+		}
+		properties, err := aggregateProperties(transaction, ids, policies)
+		if err != nil {
+			return nil, err
+		}
+		if err := updateProperties(transaction, ids, properties); err != nil {
+			return nil, err
+		}
+		return nil, detachDeleteOtherNodes(transaction, ids)
 	}
-	if len(ids) < 2 {
-		return nil
-	}
-	if err := copyRelationships(g.transaction, ids); err != nil {
-		return err
-	}
-	properties, err := aggregateProperties(g.transaction, ids, policies)
-	if err != nil {
-		return err
-	}
-	if err := updateProperties(g.transaction, ids, properties); err != nil {
-		return err
-	}
-	return detachDeleteOtherNodes(g.transaction, ids)
 }
 
 func getNodeIds(transaction neo4j.Transaction, pattern Pattern) ([]int64, error) {

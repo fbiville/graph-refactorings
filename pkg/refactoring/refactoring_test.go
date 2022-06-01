@@ -37,9 +37,8 @@ func TestMergeNodes(outer *testing.T) {
 		initGraph(t, session, []string{"MATCH (n) DETACH DELETE n"})
 		tx, err := session.BeginTransaction()
 		assertNilError(t, err)
-		refactorer := refactoring.NewGraphRefactorer(tx)
 
-		err = refactorer.MergeNodes(refactoring.Pattern{
+		err = refactoring.MergeNodes(tx, refactoring.Pattern{
 			CypherFragment: "(n)",
 			OutputVariable: "n",
 		}, nil)
@@ -63,9 +62,8 @@ func TestMergeNodes(outer *testing.T) {
 		initGraph(t, session, []string{"MATCH (n) DETACH DELETE n", "CREATE (:Person {name: 'Florent'})"})
 		tx, err := session.BeginTransaction()
 		assertNilError(t, err)
-		refactorer := refactoring.NewGraphRefactorer(tx)
 
-		err = refactorer.MergeNodes(refactoring.Pattern{
+		err = refactoring.MergeNodes(tx, refactoring.Pattern{
 			CypherFragment: "(n)",
 			OutputVariable: "n",
 		}, nil)
@@ -97,9 +95,8 @@ func TestMergeNodes(outer *testing.T) {
 		initGraph(t, session, []string{"MATCH (n) DETACH DELETE n", "CREATE (:Person {name: 'Florent'}), (:Robot {name: 'Flower'})"})
 		tx, err := session.BeginTransaction()
 		assertNilError(t, err)
-		refactorer := refactoring.NewGraphRefactorer(tx)
 
-		err = refactorer.MergeNodes(refactoring.Pattern{
+		err = refactoring.MergeNodes(tx, refactoring.Pattern{
 			CypherFragment: "(n:Person)",
 			OutputVariable: "n",
 		}, nil)
@@ -131,9 +128,8 @@ func TestMergeNodes(outer *testing.T) {
 		initGraph(t, session, []string{"MATCH (n) DETACH DELETE n", "CREATE (:Person), (:Person)"})
 		tx, err := session.BeginTransaction()
 		assertNilError(t, err)
-		refactorer := refactoring.NewGraphRefactorer(tx)
 
-		err = refactorer.MergeNodes(refactoring.Pattern{
+		err = refactoring.MergeNodes(tx, refactoring.Pattern{
 			CypherFragment: "(n)",
 			OutputVariable: "n",
 		}, nil)
@@ -164,9 +160,8 @@ func TestMergeNodes(outer *testing.T) {
 		initGraph(t, session, []string{"MATCH (n) DETACH DELETE n", "CREATE (:Person), (:Person), (:Robot {name: 'mystery'})"})
 		tx, err := session.BeginTransaction()
 		assertNilError(t, err)
-		refactorer := refactoring.NewGraphRefactorer(tx)
 
-		err = refactorer.MergeNodes(refactoring.Pattern{
+		err = refactoring.MergeNodes(tx, refactoring.Pattern{
 			CypherFragment: "(n:Person)",
 			OutputVariable: "n",
 		}, nil)
@@ -286,9 +281,8 @@ func TestMergeNodes(outer *testing.T) {
 				initGraph(t, session, append([]string{"MATCH (n) DETACH DELETE n"}, testCase.initQueries...))
 				tx, err := session.BeginTransaction()
 				assertNilError(t, err)
-				refactorer := refactoring.NewGraphRefactorer(tx)
 
-				err = refactorer.MergeNodes(testCase.pattern, testCase.policies)
+				err = refactoring.MergeNodes(tx, testCase.pattern, testCase.policies)
 
 				assertNilError(t, err)
 				assertNilError(t, tx.Commit())
@@ -420,9 +414,8 @@ CREATE (florent)<-[:BLAMES {frequency: "sometimes"}]-(florent)
 				initGraph(t, session, append([]string{"MATCH (n) DETACH DELETE n"}, testCase.initQueries...))
 				tx, err := session.BeginTransaction()
 				assertNilError(t, err)
-				refactorer := refactoring.NewGraphRefactorer(tx)
 
-				err = refactorer.MergeNodes(testCase.pattern, testCase.policies)
+				err = refactoring.MergeNodes(tx, testCase.pattern, testCase.policies)
 
 				assertNilError(t, err)
 				assertNilError(t, tx.Commit())
