@@ -154,6 +154,66 @@ func TestMergeNodes(outer *testing.T) {
 		}
 	})
 
+	outer.Run("two matching nodes with varyings labels", func(t *testing.T) {
+		session := driver.NewSession(neo4j.SessionConfig{})
+		defer assertCloses(t, session)
+		initGraph(t, session, []string{"MATCH (n) DETACH DELETE n", "CREATE (:Person:Robot), (:Person:Human:Being)"})
+		tx, err := session.BeginTransaction()
+		assertNilError(t, err)
+
+		err = refactoring.MergeNodes(tx, refactoring.Pattern{
+			CypherFragment: "(n)",
+			OutputVariable: "n",
+		}, nil)
+
+		assertNilError(t, err)
+		assertNilError(t, tx.Commit())
+		assertNilError(t, tx.Close())
+		result, err := session.Run(`
+	MATCH (n) UNWIND labels(n) AS label
+	WITH label ORDER BY label ASC
+	RETURN collect(label) AS labels`, nil)
+		assertNilError(t, err)
+		record, err := result.Single()
+		assertNilError(t, err)
+		rawLabels, _ := record.Get("labels")
+		actualLabels := rawLabels.([]any)
+		expectedLabels := []any{"Being", "Human", "Person", "Robot"}
+		if !reflect.DeepEqual(actualLabels, expectedLabels) {
+			t.Errorf("Expected labels %v, got %v", expectedLabels, actualLabels)
+		}
+	})
+
+	outer.Run("two matching nodes with varyings labels and unmatched others", func(t *testing.T) {
+		session := driver.NewSession(neo4j.SessionConfig{})
+		defer assertCloses(t, session)
+		initGraph(t, session, []string{"MATCH (n) DETACH DELETE n", "CREATE (:Person:Robot), (:Person:Human:Being), (:Zombie)"})
+		tx, err := session.BeginTransaction()
+		assertNilError(t, err)
+
+		err = refactoring.MergeNodes(tx, refactoring.Pattern{
+			CypherFragment: "(n:Person)",
+			OutputVariable: "n",
+		}, nil)
+
+		assertNilError(t, err)
+		assertNilError(t, tx.Commit())
+		assertNilError(t, tx.Close())
+		result, err := session.Run(`
+	MATCH (n:Person) UNWIND labels(n) AS label
+	WITH label ORDER BY label ASC
+	RETURN collect(label) AS labels`, nil)
+		assertNilError(t, err)
+		record, err := result.Single()
+		assertNilError(t, err)
+		rawLabels, _ := record.Get("labels")
+		actualLabels := rawLabels.([]any)
+		expectedLabels := []any{"Being", "Human", "Person", "Robot"}
+		if !reflect.DeepEqual(actualLabels, expectedLabels) {
+			t.Errorf("Expected labels %v, got %v", expectedLabels, actualLabels)
+		}
+	})
+
 	outer.Run("two matching nodes plus other unmatched", func(t *testing.T) {
 		session := driver.NewSession(neo4j.SessionConfig{})
 		defer assertCloses(t, session)

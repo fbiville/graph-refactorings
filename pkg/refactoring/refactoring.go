@@ -53,6 +53,9 @@ func MergeNodesFn(pattern Pattern, policies map[string]MergePolicy) neo4j.Transa
 		if len(ids) < 2 {
 			return nil, nil
 		}
+		if err := copyLabels(transaction, ids); err != nil {
+			return nil, err
+		}
 		if err := copyRelationships(transaction, ids); err != nil {
 			return nil, err
 		}
@@ -76,6 +79,37 @@ func getNodeIds(transaction neo4j.Transaction, pattern Pattern) ([]int64, error)
 		ids = append(ids, rawId.(int64))
 	}
 	return ids, result.Err()
+}
+
+func copyLabels(transaction neo4j.Transaction, ids []int64) error {
+	result, err := transaction.Run(`
+MATCH (n) WHERE ID(n) IN $ids
+UNWIND labels(n) AS label
+WITH DISTINCT label
+ORDER BY label ASC
+RETURN collect(label) AS labels
+`, map[string]interface{}{"ids": ids[1:]})
+	if err != nil {
+		return err
+	}
+	record, err := result.Single()
+	if err != nil {
+		return err
+	}
+
+	labels, _ := record.Get("labels")
+	var query strings.Builder
+	query.WriteString("MATCH (n) WHERE ID(n) = $id SET n")
+	for _, label := range labels.([]any) {
+		query.WriteString(":")
+		query.WriteString(label.(string))
+	}
+	result, err = transaction.Run(query.String(), map[string]interface{}{"id": ids[0]})
+	if err != nil {
+		return err
+	}
+	_, err = result.Consume()
+	return err
 }
 
 func copyRelationships(transaction neo4j.Transaction, ids []int64) error {
