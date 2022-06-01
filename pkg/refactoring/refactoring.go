@@ -56,11 +56,7 @@ func MergeNodesFn(pattern Pattern, policies map[string]MergePolicy) neo4j.Transa
 		if err := copyRelationships(transaction, ids); err != nil {
 			return nil, err
 		}
-		properties, err := aggregateProperties(transaction, ids, policies)
-		if err != nil {
-			return nil, err
-		}
-		if err := updateProperties(transaction, ids, properties); err != nil {
+		if err := copyProperties(transaction, ids, policies); err != nil {
 			return nil, err
 		}
 		return nil, detachDeleteOtherNodes(transaction, ids)
@@ -176,6 +172,14 @@ RETURN outgoing
 type property struct {
 	name  string
 	value any
+}
+
+func copyProperties(transaction neo4j.Transaction, ids []int64, policies map[string]MergePolicy) error {
+	properties, err := aggregateProperties(transaction, ids, policies)
+	if err != nil {
+		return err
+	}
+	return updateProperties(transaction, ids, properties)
 }
 
 func aggregateProperties(transaction neo4j.Transaction, ids []int64, policies map[string]MergePolicy) ([]property, error) {
