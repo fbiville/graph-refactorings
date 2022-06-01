@@ -3,12 +3,31 @@ package refactoring
 import (
 	"fmt"
 	"github.com/neo4j/neo4j-go-driver/v4/neo4j"
+	"regexp"
 	"strings"
 )
 
-type MergePolicy int
+type PropertyMergePolicy struct {
+	regex    *regexp.Regexp
+	strategy PropertyMergeStrategy
+}
 
-func (m MergePolicy) Combine(values []any) any {
+func NewPropertyMergePolicy(nameRegex string, strategy PropertyMergeStrategy) PropertyMergePolicy {
+	return PropertyMergePolicy{
+		regex:    regexp.MustCompile(nameRegex),
+		strategy: strategy,
+	}
+}
+
+type PropertyMergeStrategy int
+
+const (
+	KeepAll PropertyMergeStrategy = iota
+	KeepFirst
+	KeepLast
+)
+
+func (m PropertyMergeStrategy) Combine(values []any) any {
 	size := len(values)
 	switch m {
 	case KeepAll:
@@ -28,23 +47,17 @@ func (m MergePolicy) Combine(values []any) any {
 	}
 }
 
-const (
-	KeepAll MergePolicy = iota
-	KeepFirst
-	KeepLast
-)
-
 type Pattern struct {
 	CypherFragment string
 	OutputVariable string
 }
 
-func MergeNodes(transaction neo4j.Transaction, pattern Pattern, policies map[string]MergePolicy) error {
+func MergeNodes(transaction neo4j.Transaction, pattern Pattern, policies []PropertyMergePolicy) error {
 	_, err := MergeNodesFn(pattern, policies)(transaction)
 	return err
 }
 
-func MergeNodesFn(pattern Pattern, policies map[string]MergePolicy) neo4j.TransactionWork {
+func MergeNodesFn(pattern Pattern, policies []PropertyMergePolicy) neo4j.TransactionWork {
 	return func(transaction neo4j.Transaction) (interface{}, error) {
 		ids, err := getNodeIds(transaction, pattern)
 		if err != nil {
@@ -208,7 +221,7 @@ type property struct {
 	value any
 }
 
-func copyProperties(transaction neo4j.Transaction, ids []int64, policies map[string]MergePolicy) error {
+func copyProperties(transaction neo4j.Transaction, ids []int64, policies []PropertyMergePolicy) error {
 	properties, err := aggregateProperties(transaction, ids, policies)
 	if err != nil {
 		return err
@@ -216,7 +229,7 @@ func copyProperties(transaction neo4j.Transaction, ids []int64, policies map[str
 	return updateProperties(transaction, ids, properties)
 }
 
-func aggregateProperties(transaction neo4j.Transaction, ids []int64, policies map[string]MergePolicy) ([]property, error) {
+func aggregateProperties(transaction neo4j.Transaction, ids []int64, policies []PropertyMergePolicy) ([]property, error) {
 	result, err := transaction.Run(`UNWIND $ids AS id
 MATCH (n) WHERE id(n) = id
 UNWIND keys(n) AS key
@@ -235,16 +248,25 @@ RETURN property
 		rawProperty, _ := record.Get("property")
 		prop := rawProperty.(map[string]any)
 		propertyName := prop["key"].(string)
-		policy, found := policies[propertyName]
+		policy, found := findPolicy(propertyName, policies)
 		if !found {
 			return nil, fmt.Errorf("could not find merge policy for property %s", propertyName)
 		}
 		properties[i] = property{
 			name:  propertyName,
-			value: policy.Combine(prop["values"].([]any)),
+			value: policy.strategy.Combine(prop["values"].([]any)),
 		}
 	}
 	return properties, nil
+}
+
+func findPolicy(name string, policies []PropertyMergePolicy) (PropertyMergePolicy, bool) {
+	for _, policy := range policies {
+		if policy.regex.MatchString(name) {
+			return policy, true
+		}
+	}
+	return PropertyMergePolicy{}, false
 }
 
 func updateProperties(transaction neo4j.Transaction, ids []int64, properties []property) error {

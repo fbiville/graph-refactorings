@@ -17,7 +17,7 @@ type base struct {
 	name        string
 	initQueries []string
 	pattern     refactoring.Pattern
-	policies    map[string]refactoring.MergePolicy
+	policies    []refactoring.PropertyMergePolicy
 }
 
 func TestMergeNodes(outer *testing.T) {
@@ -262,8 +262,8 @@ func TestMergeNodes(outer *testing.T) {
 						CypherFragment: "(p:Person) WITH p ORDER BY p.name ASC",
 						OutputVariable: "p",
 					},
-					policies: map[string]refactoring.MergePolicy{
-						"name": refactoring.KeepAll,
+					policies: []refactoring.PropertyMergePolicy{
+						refactoring.NewPropertyMergePolicy("name", refactoring.KeepAll),
 					},
 				},
 				expectedNodeName: []any{"Florent", "Latifa"},
@@ -278,8 +278,24 @@ func TestMergeNodes(outer *testing.T) {
 						CypherFragment: "(p:Person) WITH p ORDER BY p.name ASC",
 						OutputVariable: "p",
 					},
-					policies: map[string]refactoring.MergePolicy{
-						"name": refactoring.KeepFirst,
+					policies: []refactoring.PropertyMergePolicy{
+						refactoring.NewPropertyMergePolicy("name", refactoring.KeepFirst),
+					},
+				},
+				expectedNodeName: "Florent",
+			},
+			{
+				base: base{
+					name: "keeps first property matching regex",
+					initQueries: []string{
+						"CREATE (:Person {name: 'Florent'}), (:Person {name: 'Latifa'})",
+					},
+					pattern: refactoring.Pattern{
+						CypherFragment: "(p:Person) WITH p ORDER BY p.name ASC",
+						OutputVariable: "p",
+					},
+					policies: []refactoring.PropertyMergePolicy{
+						refactoring.NewPropertyMergePolicy("na.*", refactoring.KeepFirst),
 					},
 				},
 				expectedNodeName: "Florent",
@@ -294,8 +310,8 @@ func TestMergeNodes(outer *testing.T) {
 						CypherFragment: "(p:Person) WITH p ORDER BY p.name ASC",
 						OutputVariable: "p",
 					},
-					policies: map[string]refactoring.MergePolicy{
-						"name": refactoring.KeepFirst,
+					policies: []refactoring.PropertyMergePolicy{
+						refactoring.NewPropertyMergePolicy("name", refactoring.KeepFirst),
 					},
 				},
 				expectedNodeName: "Florent",
@@ -310,8 +326,24 @@ func TestMergeNodes(outer *testing.T) {
 						CypherFragment: "(p:Person) WITH p ORDER BY p.name ASC",
 						OutputVariable: "p",
 					},
-					policies: map[string]refactoring.MergePolicy{
-						"name": refactoring.KeepLast,
+					policies: []refactoring.PropertyMergePolicy{
+						refactoring.NewPropertyMergePolicy("name", refactoring.KeepLast),
+					},
+				},
+				expectedNodeName: "Latifa",
+			},
+			{
+				base: base{
+					name: "keeps last property matching regex",
+					initQueries: []string{
+						"CREATE (:Person {name: 'Florent'}), (:Person {name: 'Latifa'})",
+					},
+					pattern: refactoring.Pattern{
+						CypherFragment: "(p:Person) WITH p ORDER BY p.name ASC",
+						OutputVariable: "p",
+					},
+					policies: []refactoring.PropertyMergePolicy{
+						refactoring.NewPropertyMergePolicy(".*e", refactoring.KeepLast),
 					},
 				},
 				expectedNodeName: "Latifa",
@@ -326,8 +358,8 @@ func TestMergeNodes(outer *testing.T) {
 						CypherFragment: "(p:Person) WITH p ORDER BY p.name ASC",
 						OutputVariable: "p",
 					},
-					policies: map[string]refactoring.MergePolicy{
-						"name": refactoring.KeepLast,
+					policies: []refactoring.PropertyMergePolicy{
+						refactoring.NewPropertyMergePolicy("name", refactoring.KeepLast),
 					},
 				},
 				expectedNodeName: "Latifa",
@@ -383,8 +415,8 @@ func TestMergeNodes(outer *testing.T) {
 						CypherFragment: "(p:Person) WITH p ORDER BY p.name DESC",
 						OutputVariable: "p",
 					},
-					policies: map[string]refactoring.MergePolicy{
-						"name": refactoring.KeepFirst,
+					policies: []refactoring.PropertyMergePolicy{
+						refactoring.NewPropertyMergePolicy("name", refactoring.KeepFirst),
 					},
 				},
 				expectedNodeName: "Nathan",
@@ -417,8 +449,8 @@ CREATE (florent)<-[:FOUNDED_BY {since: "some date"}]-(liquigraph)
 						CypherFragment: "(p:Person) WITH p ORDER BY p.name DESC",
 						OutputVariable: "p",
 					},
-					policies: map[string]refactoring.MergePolicy{
-						"name": refactoring.KeepAll,
+					policies: []refactoring.PropertyMergePolicy{
+						refactoring.NewPropertyMergePolicy("name", refactoring.KeepAll),
 					},
 				},
 				expectedNodeName: []any{"Nathan", "Florent"},
@@ -444,8 +476,8 @@ CREATE (florent)<-[:BLAMES {frequency: "sometimes"}]-(florent)
 						CypherFragment: "(p:Person) WITH p ORDER BY p.name DESC",
 						OutputVariable: "p",
 					},
-					policies: map[string]refactoring.MergePolicy{
-						"name": refactoring.KeepLast,
+					policies: []refactoring.PropertyMergePolicy{
+						refactoring.NewPropertyMergePolicy("name", refactoring.KeepLast),
 					},
 				},
 				expectedNodeName: "Florent",
