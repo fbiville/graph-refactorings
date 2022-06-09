@@ -114,8 +114,9 @@ RETURN collect(label) AS labels
 	var query strings.Builder
 	query.WriteString("MATCH (n) WHERE ID(n) = $id SET n")
 	for _, label := range labels.([]any) {
-		query.WriteString(":")
+		query.WriteString(":`")
 		query.WriteString(label.(string))
+		query.WriteString("`")
 	}
 	result, err = transaction.Run(query.String(), map[string]interface{}{"id": ids[0]})
 	if err != nil {

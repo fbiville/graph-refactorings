@@ -125,7 +125,7 @@ func TestMergeNodes(outer *testing.T) {
 	outer.Run("two nodes with same label, no prop", func(t *testing.T) {
 		session := driver.NewSession(neo4j.SessionConfig{})
 		defer assertCloses(t, session)
-		initGraph(t, session, []string{"MATCH (n) DETACH DELETE n", "CREATE (:Person), (:Person)"})
+		initGraph(t, session, []string{"MATCH (n) DETACH DELETE n", "CREATE (:`A Person`), (:`A Person`)"})
 		tx, err := session.BeginTransaction()
 		assertNilError(t, err)
 
@@ -143,7 +143,7 @@ func TestMergeNodes(outer *testing.T) {
 		assertNilError(t, err)
 		rawNode, _ := record.Get("n")
 		node := rawNode.(neo4j.Node)
-		expectedLabels := []string{"Person"}
+		expectedLabels := []string{"A Person"}
 		actualLabels := node.Labels
 		if !reflect.DeepEqual(actualLabels, expectedLabels) {
 			t.Errorf("Expected labels %v, got %v", expectedLabels, actualLabels)
