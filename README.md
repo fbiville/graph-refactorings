@@ -1,5 +1,7 @@
 # Client-Side Graph Refactorings for Neo4j
 
+[![Go](https://github.com/fbiville/graph-refactorings/actions/workflows/go.yml/badge.svg)](https://github.com/fbiville/graph-refactorings/actions/workflows/go.yml)
+
 This is inspired from the APOC refactorings, but implemented completely on
 the driver side, with the [official Go driver for Neo4j](https://github.com/neo4j/neo4j-go-driver).
 
