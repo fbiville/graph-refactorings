@@ -52,11 +52,48 @@ type Pattern struct {
 	OutputVariable string
 }
 
+// MergeNodes allows you to merge the nodes matching the provided Pattern.
+// It is especially useful after loading data from external, non-graph data
+// sources.
+//
+// MergeNodes leaves the graph unchanged if fewer than two nodes match the
+// specific pattern.
+// Otherwise, MergeNodes will target the first node of the sequence and
+// "collapse" all other nodes into it.
+//
+// It is highly advised the pattern includes an explicit order clause.
+// For instance, favor '(p:Person) WITH p ORDER BY p.name ASC' over just
+// '(p:Person)'. The latter fragment does not specify any explicit order so the
+// result of MergeNodes with the same data set on two different servers could be
+// different.
+//
+// Pattern.OutputVariable denotes the variable used in the pattern for
+// the nodes to merge. If the fragment is
+// '(m:Movie)<-[:DIRECTS]-(d:Director {name: 'Jane'}) WITH m ORDER BY m.title',
+// the output variable is most likely 'm', so that all the nodes of the movies
+// directed by 'Jane' are merged into a single node.
+// Pattern.OutputVariable must always refer to a variable defined in
+// Pattern.CypherFragment.
+//
+// When merging nodes, property conflicts may happen. To prevent that,
+// MergeNodes accepts one to many PropertyMergePolicy.
+// Each policy consists of a regular expression for property names and
+// PropertyMergeStrategy defines what to do when combining properties.
+// The strategy is either KeepAll where all values from matched nodes under the
+// same property name are combined into a single array (even when only 1 value
+// is found), or KeepFirst where only the first set value is kept (this is not
+// necessarily the first node's value since it may not define that particular
+// property), or KeepLast where only the last set value is kept (likewise, this
+// is not necessarily the last node's value).
+// All matched nodes' property names must have a matching policy or the change
+// set execution will fail.
 func MergeNodes(transaction neo4j.Transaction, pattern Pattern, policies []PropertyMergePolicy) error {
 	_, err := MergeNodesFn(pattern, policies)(transaction)
 	return err
 }
 
+// MergeNodesFn is a Neo4j transaction function-friendly variant of MergeNodes.
+// Please refer to the latter for documentation.
 func MergeNodesFn(pattern Pattern, policies []PropertyMergePolicy) neo4j.TransactionWork {
 	return func(transaction neo4j.Transaction) (interface{}, error) {
 		ids, err := getNodeIds(transaction, pattern)
