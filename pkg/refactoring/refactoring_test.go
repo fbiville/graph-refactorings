@@ -256,14 +256,14 @@ func TestMergeNodes(outer *testing.T) {
 				base: base{
 					name: "keeps all properties",
 					initQueries: []string{
-						"CREATE (:Person {name: 'Florent'}), (:Person {name: 'Latifa'})",
+						"CREATE (:Person {name: 'Florent'}), (:Person {name: 'Latifa', `the name`: 'ignored by test'})",
 					},
 					pattern: refactoring.Pattern{
 						CypherFragment: "(p:Person) WITH p ORDER BY p.name ASC",
 						OutputVariable: "p",
 					},
 					policies: []refactoring.PropertyMergePolicy{
-						refactoring.NewPropertyMergePolicy("name", refactoring.KeepAll),
+						refactoring.NewPropertyMergePolicy(".*name", refactoring.KeepAll),
 					},
 				},
 				expectedNodeName: []any{"Florent", "Latifa"},
