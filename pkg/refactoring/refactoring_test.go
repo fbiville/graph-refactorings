@@ -464,39 +464,6 @@ CREATE (florent)<-[:FOUNDED_BY {since: "some date"}]-(liquigraph)
 				},
 				expectedOutgoing: []any{},
 			},
-			{
-				base: base{
-					name: "attaches self relationships of merged nodes",
-					initQueries: []string{`
-CREATE (florent:Person {name: "Florent"}), (nathan:Person {name: "Nathan"})
-CREATE (florent)<-[:BLAMES {frequency: "sometimes"}]-(florent)
-`,
-					},
-					pattern: refactoring.Pattern{
-						CypherFragment: "(p:Person) WITH p ORDER BY p.name DESC",
-						OutputVariable: "p",
-					},
-					policies: []refactoring.PropertyMergePolicy{
-						refactoring.NewPropertyMergePolicy("name", refactoring.KeepLast),
-					},
-				},
-				expectedNodeName: "Florent",
-				expectedIncoming: []any{
-					neo4j.Relationship{
-						Type: "BLAMES",
-						Props: map[string]interface{}{
-							"frequency": "sometimes",
-						},
-					},
-				},
-				expectedOutgoing: []any{
-					neo4j.Relationship{
-						Type: "BLAMES",
-						Props: map[string]interface{}{
-							"frequency": "sometimes",
-						},
-					}},
-			},
 		}
 
 		for i, testCase := range testCases {
@@ -535,6 +502,117 @@ RETURN p.name AS name, [ (p)-[outgoing]->() | outgoing ] AS allOutgoing, [ (p)<-
 				outgoing := rawOutgoing.([]any)
 				actual = ignoringIds(outgoing)
 				expected = testCase.expectedOutgoing
+				if !reflect.DeepEqual(expected, actual) {
+					t.Fatalf("Expected %v got: %v", expected, actual)
+				}
+			})
+		}
+	})
+
+	outer.Run("nodes with current or post-merge self-refs", func(inner *testing.T) {
+		type testCase struct {
+			base
+			expectedNodeName any
+			expectedSelfRels []any
+		}
+
+		testCases := []testCase{
+			{
+				base: base{
+					name: "attaches self relationships of merged nodes",
+					initQueries: []string{`
+CREATE (florent:Person {name: "Florent"}), (nathan:Person {name: "Nathan"})
+CREATE (florent)<-[:BLAMES {frequency: "sometimes"}]-(florent)
+`,
+					},
+					pattern: refactoring.Pattern{
+						CypherFragment: "(p:Person) WITH p ORDER BY p.name DESC",
+						OutputVariable: "p",
+					},
+					policies: []refactoring.PropertyMergePolicy{
+						refactoring.NewPropertyMergePolicy("name", refactoring.KeepLast),
+					},
+				},
+				expectedNodeName: "Florent",
+				expectedSelfRels: []any{
+					neo4j.Relationship{
+						Type: "BLAMES",
+						Props: map[string]interface{}{
+							"frequency": "sometimes",
+						},
+					},
+				},
+			},
+			{
+				base: base{
+					name: "yields self relationships when merging nodes linked between themselves",
+					initQueries: []string{`
+CREATE (:Person {name: "Florent"})-[:` + "`" + `FOLLOWS 1` + "`" + ` {name: 'f to m'}]->(:Person {name: "Marouane"})-[:FOLLOWS_2 {name: 'm to n'}]->(nathan:Person {name: "Nathan"})-[:FOLLOWS_3 {name: 'n to n'}]->(nathan)
+`,
+					},
+					pattern: refactoring.Pattern{
+						CypherFragment: "(p:Person) WITH p ORDER BY p.name DESC",
+						OutputVariable: "p",
+					},
+					policies: []refactoring.PropertyMergePolicy{
+						refactoring.NewPropertyMergePolicy("name", refactoring.KeepFirst),
+					},
+				},
+				expectedNodeName: "Nathan",
+				expectedSelfRels: []any{
+					neo4j.Relationship{
+						Type: "FOLLOWS 1",
+						Props: map[string]interface{}{
+							"name": "f to m",
+						},
+					},
+					neo4j.Relationship{
+						Type: "FOLLOWS_2",
+						Props: map[string]interface{}{
+							"name": "m to n",
+						},
+					},
+					neo4j.Relationship{
+						Type: "FOLLOWS_3",
+						Props: map[string]interface{}{
+							"name": "n to n",
+						},
+					},
+				},
+			},
+		}
+
+		for i, testCase := range testCases {
+			inner.Run(fmt.Sprintf("[%d] %s", i, testCase.name), func(t *testing.T) {
+				session := driver.NewSession(neo4j.SessionConfig{})
+				defer assertCloses(t, session)
+				initGraph(t, session, append([]string{"MATCH (n) DETACH DELETE n"}, testCase.initQueries...))
+				tx, err := session.BeginTransaction()
+				assertNilError(t, err)
+
+				err = refactoring.MergeNodes(tx, testCase.pattern, testCase.policies)
+
+				assertNilError(t, err)
+				assertNilError(t, tx.Commit())
+				assertNilError(t, tx.Close())
+				result, err := session.Run(`
+MATCH (p:Person)-[rel]->(p)
+WITH p.name AS name, rel
+ORDER BY type(rel) ASC
+RETURN name, collect(rel) AS rels
+`, nil)
+				assertNilError(t, err)
+				record, err := result.Single()
+				assertNilError(t, err)
+				actual, _ := record.Get("name")
+				expected := testCase.expectedNodeName
+				if !reflect.DeepEqual(actual, expected) {
+					t.Fatalf("Expected %v got: %v", expected, actual)
+				}
+				rawRels, _ := record.Get("rels")
+				rel := rawRels.([]any)
+				actual = ignoringIds(rel)
+				expected = testCase.expectedSelfRels
 				if !reflect.DeepEqual(expected, actual) {
 					t.Fatalf("Expected %v got: %v", expected, actual)
 				}

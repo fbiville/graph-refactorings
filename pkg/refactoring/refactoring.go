@@ -69,10 +69,10 @@ func MergeNodesFn(pattern Pattern, policies []PropertyMergePolicy) neo4j.Transac
 		if err := copyLabels(transaction, ids); err != nil {
 			return nil, err
 		}
-		if err := copyRelationships(transaction, ids); err != nil {
+		if err := copyProperties(transaction, ids, policies); err != nil {
 			return nil, err
 		}
-		if err := copyProperties(transaction, ids, policies); err != nil {
+		if err := copyRelationships(transaction, ids); err != nil {
 			return nil, err
 		}
 		return nil, detachDeleteOtherNodes(transaction, ids)
@@ -125,97 +125,6 @@ RETURN collect(label) AS labels
 	return err
 }
 
-func copyRelationships(transaction neo4j.Transaction, ids []int64) error {
-	if err := copyIncomingRelationships(transaction, ids); err != nil {
-		return err
-	}
-	return copyOutgoingRelationships(transaction, ids)
-}
-
-func copyIncomingRelationships(transaction neo4j.Transaction, ids []int64) error {
-	result, err := transaction.Run(`MATCH (n) WHERE id(n) IN $ids
-WITH [ (n)<-[incoming]-() | incoming ] AS incomingRels
-UNWIND incomingRels AS incoming
-RETURN incoming
-`, map[string]interface{}{"ids": ids[1:]})
-	if err != nil {
-		return err
-	}
-	records, err := result.Collect()
-	if err != nil {
-		return err
-	}
-	run := false
-	parameters := make(map[string]any, 1+len(records))
-	parameters["id_end"] = ids[0]
-	queryBuilder := strings.Builder{}
-	queryBuilder.WriteString("MATCH (end) WHERE id(end) = $id_end\n")
-	for i, record := range records {
-		rawIncoming, _ := record.Get("incoming")
-		if rawIncoming == nil {
-			continue
-		}
-		run = true
-		incoming := rawIncoming.(neo4j.Relationship)
-		parameters[fmt.Sprintf("id_%d", i)] = incoming.StartId
-		parameters[fmt.Sprintf("props_%d", i)] = incoming.Props
-		queryBuilder.WriteString(fmt.Sprintf("WITH end MATCH (n_%[1]d) WHERE id(n_%[1]d) = $id_%[1]d\n", i))
-		queryBuilder.WriteString(fmt.Sprintf("CREATE (n_%[1]d)-[rel_%[1]d:`%[2]s`]->(end) SET rel_%[1]d = $props_%[1]d\n", i, incoming.Type))
-	}
-	if !run {
-		return nil
-	}
-	query := queryBuilder.String()
-	result, err = transaction.Run(query, parameters)
-	if err != nil {
-		return err
-	}
-	_, err = result.Consume()
-	return err
-}
-
-func copyOutgoingRelationships(transaction neo4j.Transaction, ids []int64) error {
-	result, err := transaction.Run(`MATCH (n) WHERE id(n) IN $ids
-WITH [ (n)-[outgoing]->() | outgoing ] AS outgoingRels
-UNWIND outgoingRels AS outgoing
-RETURN outgoing
-`, map[string]interface{}{"ids": ids[1:]})
-	if err != nil {
-		return err
-	}
-	records, err := result.Collect()
-	if err != nil {
-		return err
-	}
-	run := false
-	parameters := make(map[string]any, 1+len(records))
-	parameters["id_start"] = ids[0]
-	queryBuilder := strings.Builder{}
-	queryBuilder.WriteString("MATCH (start) WHERE id(start) = $id_start\n")
-	for i, record := range records {
-		rawOutgoing, _ := record.Get("outgoing")
-		if rawOutgoing == nil {
-			continue
-		}
-		run = true
-		outgoing := rawOutgoing.(neo4j.Relationship)
-		parameters[fmt.Sprintf("id_%d", i)] = outgoing.EndId
-		parameters[fmt.Sprintf("props_%d", i)] = outgoing.Props
-		queryBuilder.WriteString(fmt.Sprintf("WITH start MATCH (n_%[1]d) WHERE id(n_%[1]d) = $id_%[1]d\n", i))
-		queryBuilder.WriteString(fmt.Sprintf("CREATE (n_%[1]d)<-[rel_%[1]d:`%[2]s`]-(start) SET rel_%[1]d = $props_%[1]d\n", i, outgoing.Type))
-	}
-	if !run {
-		return nil
-	}
-	query := queryBuilder.String()
-	result, err = transaction.Run(query, parameters)
-	if err != nil {
-		return err
-	}
-	_, err = result.Consume()
-	return err
-}
-
 type property struct {
 	name  string
 	value any
@@ -227,6 +136,62 @@ func copyProperties(transaction neo4j.Transaction, ids []int64, policies []Prope
 		return err
 	}
 	return updateProperties(transaction, ids, properties)
+}
+
+func copyRelationships(transaction neo4j.Transaction, ids []int64) error {
+	idTail := ids[1:]
+	result, err := transaction.Run(`
+MATCH (n) WHERE id(n) IN $ids
+WITH [ (n)<-[incoming]-() | incoming ] AS incomingRels
+UNWIND incomingRels AS rel
+RETURN rel
+UNION
+MATCH (n) WHERE id(n) IN $ids
+WITH [ (n)-[outgoing]->() | outgoing ] AS outgoingRels
+UNWIND outgoingRels AS rel
+RETURN rel`, map[string]interface{}{"ids": idTail})
+	if err != nil {
+		return err
+	}
+	records, err := result.Collect()
+	if err != nil {
+		return err
+	}
+	run := false
+	parameters := make(map[string]any, 1+len(records))
+	parameters["id_target"] = ids[0]
+	queryBuilder := strings.Builder{}
+	queryBuilder.WriteString("MATCH (target) WHERE id(target) = $id_target\n")
+	for i, record := range records {
+		rawRelation, _ := record.Get("rel")
+		if rawRelation == nil {
+			continue
+		}
+		run = true
+		relation := rawRelation.(neo4j.Relationship)
+		parameters[fmt.Sprintf("props_%d", i)] = relation.Props
+		if contains(idTail, relation.StartId) && contains(idTail, relation.EndId) { // current or post-merge self-rel
+			queryBuilder.WriteString(fmt.Sprintf("CREATE (target)-[rel_%[1]d:`%[2]s`]->(target) SET rel_%[1]d = $props_%[1]d\n", i, relation.Type))
+		} else if contains(idTail, relation.EndId) { // incoming
+			parameters[fmt.Sprintf("start_id_%d", i)] = relation.StartId
+			queryBuilder.WriteString(fmt.Sprintf("WITH target MATCH (n_%[1]d) WHERE id(n_%[1]d) = $start_id_%[1]d\n", i))
+			queryBuilder.WriteString(fmt.Sprintf("CREATE (n_%[1]d)-[rel_%[1]d:`%[2]s`]->(target) SET rel_%[1]d = $props_%[1]d\n", i, relation.Type))
+		} else { // outgoing
+			parameters[fmt.Sprintf("end_id_%d", i)] = relation.EndId
+			queryBuilder.WriteString(fmt.Sprintf("WITH target MATCH (n_%[1]d) WHERE id(n_%[1]d) = $end_id_%[1]d\n", i))
+			queryBuilder.WriteString(fmt.Sprintf("CREATE (n_%[1]d)<-[rel_%[1]d:`%[2]s`]-(target) SET rel_%[1]d = $props_%[1]d\n", i, relation.Type))
+		}
+	}
+	if !run {
+		return nil
+	}
+	query := queryBuilder.String()
+	result, err = transaction.Run(query, parameters)
+	if err != nil {
+		return err
+	}
+	_, err = result.Consume()
+	return err
 }
 
 func aggregateProperties(transaction neo4j.Transaction, ids []int64, policies []PropertyMergePolicy) ([]property, error) {
@@ -306,4 +271,13 @@ func detachDeleteOtherNodes(transaction neo4j.Transaction, ids []int64) error {
 	}
 	_, err = result.Consume()
 	return err
+}
+
+func contains(values []int64, value int64) bool {
+	for _, v := range values {
+		if v == value {
+			return true
+		}
+	}
+	return false
 }
