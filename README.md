@@ -1,4 +1,4 @@
-# Client-side Graph Refactorings for Neo4j
+# Client-Side Graph Refactorings for Neo4j
 
 This is inspired from the APOC refactorings, but implemented completely on
 the driver side, with the [official Go driver for Neo4j](https://github.com/neo4j/neo4j-go-driver).
