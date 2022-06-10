@@ -1,4 +1,4 @@
-module github.com/fbiville/node-clone
+module github.com/fbiville/graph-refactorings
 
 go 1.18
 
