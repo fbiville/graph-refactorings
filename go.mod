@@ -1,4 +1,4 @@
-module github.com/fbiville/graph-refactorings
+module github.com/graph-refactoring/graph-refactoring-go
 
 go 1.18
 

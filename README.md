@@ -1,6 +1,6 @@
-# Client-Side Graph Refactorings for Neo4j
+# Client-Side Graph Refactorings for Neo4j, in Go
 
-[![Go](https://github.com/fbiville/graph-refactorings/actions/workflows/go.yml/badge.svg)](https://github.com/fbiville/graph-refactorings/actions/workflows/go.yml)
+[![Go](https://github.com/graph-refactoring/graph-refactoring-go/actions/workflows/go.yml/badge.svg)](https://github.com/graph-refactoring/graph-refactoring-go/actions/workflows/go.yml)
 
 This is inspired from the APOC refactorings, but implemented completely on
 the driver side, with the [official Go driver for Neo4j](https://github.com/neo4j/neo4j-go-driver).
@@ -13,7 +13,8 @@ Run it at your own risk!
 
 ### API
 
-Import `"github.com/fbiville/node-clone/pkg/refactoring"` and either call:
+Import `"github.com/graph-refactoring/graph-refactoring-go/pkg/refactoring"` 
+and either call:
 
  - `MergeNodes(neo4j.Transaction, refactoring.Pattern, []refactoring.PropertyMergePolicy)`
  - `MergeNodesFn(refactoring.Pattern, policies []refactoring.PropertyMergePolicy) neo4j.TransactionWork`

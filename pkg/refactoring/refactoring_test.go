@@ -3,7 +3,7 @@ package refactoring_test
 import (
 	"context"
 	"fmt"
-	"github.com/fbiville/graph-refactorings/pkg/refactoring"
+	"github.com/graph-refactoring/graph-refactoring-go/pkg/refactoring"
 	"github.com/neo4j/neo4j-go-driver/v4/neo4j"
 	"github.com/neo4j/neo4j-go-driver/v4/neo4j/dbtype"
 	"github.com/testcontainers/testcontainers-go"
