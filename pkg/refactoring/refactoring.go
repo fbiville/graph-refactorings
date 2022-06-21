@@ -163,11 +163,6 @@ RETURN collect(label) AS labels
 	return err
 }
 
-type property struct {
-	name  string
-	value any
-}
-
 func copyProperties(transaction neo4j.Transaction, ids []int64, policies []PropertyMergePolicy) error {
 	properties, err := aggregateProperties(transaction, ids, policies)
 	if err != nil {
@@ -232,7 +227,7 @@ RETURN rel`, map[string]interface{}{"ids": idTail})
 	return err
 }
 
-func aggregateProperties(transaction neo4j.Transaction, ids []int64, policies []PropertyMergePolicy) ([]property, error) {
+func aggregateProperties(transaction neo4j.Transaction, ids []int64, policies []PropertyMergePolicy) (map[string]any, error) {
 	result, err := transaction.Run(`UNWIND $ids AS id
 MATCH (n) WHERE id(n) = id
 UNWIND keys(n) AS key
@@ -246,8 +241,8 @@ RETURN property
 	if err != nil {
 		return nil, err
 	}
-	properties := make([]property, len(records))
-	for i, record := range records {
+	properties := make(map[string]any, len(records))
+	for _, record := range records {
 		rawProperty, _ := record.Get("property")
 		prop := rawProperty.(map[string]any)
 		propertyName := prop["key"].(string)
@@ -255,10 +250,7 @@ RETURN property
 		if !found {
 			return nil, fmt.Errorf("could not find merge policy for property %s", propertyName)
 		}
-		properties[i] = property{
-			name:  propertyName,
-			value: policy.strategy.Combine(prop["values"].([]any)),
-		}
+		properties[propertyName] = policy.strategy.Combine(prop["values"].([]any))
 	}
 	return properties, nil
 }
@@ -272,23 +264,14 @@ func findPolicy(name string, policies []PropertyMergePolicy) (PropertyMergePolic
 	return PropertyMergePolicy{}, false
 }
 
-func updateProperties(transaction neo4j.Transaction, ids []int64, properties []property) error {
+func updateProperties(transaction neo4j.Transaction, ids []int64, properties map[string]any) error {
 	if len(properties) == 0 {
 		return nil
 	}
-	parameters := make(map[string]any, 1+len(properties))
+	parameters := make(map[string]any, 2)
 	parameters["id"] = ids[0]
-	var builder strings.Builder
-	builder.WriteString("MATCH (n) WHERE id(n) = $id SET ")
-	for i, prop := range properties {
-		parameter := fmt.Sprintf("prop_%d", i)
-		builder.WriteString(fmt.Sprintf("n.`%s` = $%s", prop.name, parameter))
-		parameters[parameter] = prop.value
-		if i < len(properties)-1 {
-			builder.WriteString(", ")
-		}
-	}
-	query := builder.String()
+	parameters["props"] = properties
+	query := "MATCH (n) WHERE id(n) = $id SET n = $props"
 	result, err := transaction.Run(query, parameters)
 	if err != nil {
 		return err
