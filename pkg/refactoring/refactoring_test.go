@@ -9,6 +9,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 	"io"
+	"os"
 	"reflect"
 	"testing"
 )
@@ -639,11 +640,18 @@ const username = "neo4j"
 const password = "s3cr3t"
 
 func startNeo4jContainer(ctx context.Context) (testcontainers.Container, neo4j.Driver, error) {
+	version := os.Getenv("NEO4J_VERSION")
+	if version == "" {
+		version = "4.4"
+	}
 	request := testcontainers.ContainerRequest{
-		Image:        "neo4j:4.4",
+		Image:        fmt.Sprintf("neo4j:%s", version),
 		ExposedPorts: []string{"7687/tcp"},
-		Env: map[string]string{"NEO4J_AUTH": fmt.Sprintf("%s/%s",
-			username, password)},
+		Env: map[string]string{
+			"NEO4J_AUTH": fmt.Sprintf("%s/%s",
+				username, password),
+			"NEO4J_ACCEPT_LICENSE_AGREEMENT": "yes",
+		},
 		WaitingFor: wait.ForLog("Bolt enabled"),
 	}
 	container, err := testcontainers.GenericContainer(ctx,
