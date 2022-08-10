@@ -231,8 +231,10 @@ func aggregateProperties(transaction neo4j.Transaction, ids []int64, policies []
 	result, err := transaction.Run(`UNWIND $ids AS id
 MATCH (n) WHERE id(n) = id
 UNWIND keys(n) AS key
-WITH {key: key, values: collect(n[key])} AS property
-RETURN property
+WITH key, n[key] as value
+WITH key, collect(value) AS values
+RETURN {key: key, values: values} AS property
+ORDER BY property.key ASC
 `, map[string]interface{}{"ids": ids})
 	if err != nil {
 		return nil, err
