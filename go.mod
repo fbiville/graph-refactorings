@@ -3,7 +3,7 @@ module github.com/graph-refactoring/graph-refactoring-go
 go 1.18
 
 require (
-	github.com/neo4j/neo4j-go-driver/v4 v4.4.4
+	github.com/neo4j/neo4j-go-driver/v4 v4.4.5
 	github.com/testcontainers/testcontainers-go v0.18.0
 )
 
