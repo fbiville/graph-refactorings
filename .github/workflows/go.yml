@@ -11,20 +11,20 @@ jobs:
     strategy:
       matrix:
         neo4j_version:
-        - "4.3"
-        - "4.3-enterprise"
-        - "4.4"
-        - "4.4-enterprise"
+          - "4.4"
+          - "4.4-enterprise"
+          - "5.6"
+          - "5.6-enterprise"
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
+      - uses: actions/checkout@v3
 
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: 1.18
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: 1.18
 
-    - name: Test
-      env:
-        NEO4J_VERSION: ${{ matrix.neo4j_version }}
-      run: go test -v ./...
+      - name: Test
+        env:
+          NEO4J_VERSION: ${{ matrix.neo4j_version }}
+        run: go test -v ./...

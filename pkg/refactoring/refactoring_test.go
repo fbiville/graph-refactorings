@@ -637,7 +637,7 @@ func initGraph(t *testing.T, session neo4j.Session, queries []string) {
 
 const username = "neo4j"
 
-const password = "s3cr3t"
+const password = "letmein!"
 
 func startNeo4jContainer(ctx context.Context) (testcontainers.Container, neo4j.Driver, error) {
 	version := os.Getenv("NEO4J_VERSION")
